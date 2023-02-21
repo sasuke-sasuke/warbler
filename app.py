@@ -5,7 +5,7 @@ from flask_debugtoolbar import DebugToolbarExtension
 from sqlalchemy.exc import IntegrityError
 
 from forms import UserAddForm, LoginForm, MessageForm, EditProfileForm
-from models import db, connect_db, User, Message
+from models import db, connect_db, User, Message, Likes, Follows
 
 CURR_USER_KEY = "curr_user"
 
@@ -228,6 +228,7 @@ def profile():
             user.image_url = form.image_url.data
             user.header_image_url = form.header_image_url.data
             user.bio = form.bio.data
+            user.location = form.location.data
 
             db.session.commit()
             flash('Profile Updated!', 'success')
@@ -308,6 +309,40 @@ def messages_destroy(message_id):
 
 
 ##############################################################################
+# Maybe likes....   
+
+
+@app.route('/users/add_like/<message_id>', methods=['POST'])
+def like_message(message_id):
+    """Adds liked message to db"""
+
+    message = Message.query.get_or_404(message_id)
+    user_msgs = [msg for msg in g.user.messages]
+    if not g.user or message in user_msgs:
+        flash('Access unauthorized', 'danger')
+        return redirect('/')
+
+    
+    new_like = Likes(user_id=g.user.id, message_id=message_id)
+    db.session.add(new_like)
+    # If like exists, raises error for duplicate values, catches error and removes like
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        like = Likes.query.where(Likes.message_id==message_id, Likes.user_id == g.user.id).first()
+        db.session.delete(like)
+        db.session.commit()
+        flash('Removed Like', 'success')
+        return redirect(f'/users/{g.user.id}')
+
+
+    flash('Liked!', 'success')
+    return redirect(f'/users/{g.user.id}')
+
+
+
+##############################################################################
 # Homepage and error pages
 
 
@@ -320,13 +355,20 @@ def homepage():
     """
 
     if g.user:
+
+        likes = [msg.id for msg in g.user.likes]
+
+        follow_list = [f.id for f in g.user.following]
+        follow_list.append(g.user.id)
+
         messages = (Message
                     .query
+                    .filter(Message.user_id.in_(follow_list))
                     .order_by(Message.timestamp.desc())
                     .limit(100)
                     .all())
 
-        return render_template('home.html', messages=messages)
+        return render_template('home.html', messages=messages, likes=likes)
 
     else:
         return render_template('home-anon.html')
